@@ -1,0 +1,234 @@
+# GlucoCast — OhioT1DM Training Configuration
+# =============================================
+# Reference: http://smarthealth.cs.ohio.edu/OhioT1DM-dataset.html
+
+# ─── Data ────────────────────────────────────────────────────────────────────
+
+data:
+  dataset: ohio
+  data_dir: data/ohio/
+  # OhioT1DM patient IDs (2018 cohort)
+  patient_ids: [559, 563, 570, 575, 588, 591]
+  # Add 2020 cohort for larger training set:
+  # patient_ids: [559, 563, 570, 575, 588, 591, 540, 544, 552, 567, 584, 596]
+
+  # Sequence lengths (at 5-min CGM resolution)
+  encoder_steps: 72    # 6-hour lookback window (72 × 5 min = 360 min = 6h)
+  max_horizon: 24      # 24-step = 120-min maximum prediction horizon
+
+  # Prediction horizons (steps at 5-min intervals)
+  prediction_horizons: [6, 12, 24]    # 30, 60, 120 min
+
+  # Train/val/test split (chronological, per patient)
+  train_frac: 0.75
+  val_frac: 0.125
+  test_frac: 0.125
+
+  # DataLoader
+  batch_size: 64
+  num_workers: 4
+  pin_memory: true
+
+  # Cross-validation
+  cross_validation: lopocv   # lopocv | patient_split | none
+  # leave-one-patient-out cross-validation (standard OhioT1DM evaluation)
+
+
+# ─── Preprocessing ───────────────────────────────────────────────────────────
+
+preprocessing:
+  # CGM signal cleaning
+  max_roc_mgdl_min: 4.0         # Maximum physiological rate of change
+  max_delta_5min: 50.0          # Maximum 5-min CGM delta (mg/dL)
+  abs_glucose_min: 20.0         # Below this: treat as sensor error
+  abs_glucose_max: 600.0        # Above this: treat as sensor error
+
+  # Gap handling
+  short_gap_min: 15             # Cubic spline interpolation
+  medium_gap_min: 45            # Forward fill
+  long_gap_min: 120             # Forward fill (flagged uncertain)
+  # Gaps > 120 min: left as NaN (likely sensor change)
+
+  # Outlier detection
+  hampel_window: 5              # Steps on each side for Hampel filter
+  hampel_threshold: 3.0         # MAD multiplier
+
+  # Normalisation
+  normalisation: patient_zscore   # patient_zscore | population_zscore | minmax
+
+
+# ─── Feature Engineering ─────────────────────────────────────────────────────
+
+features:
+  # Insulin pharmacokinetics
+  insulin_type: NovoLog          # NovoLog | Humalog | Apidra | Fiasp
+  iob_peak_min: 75               # Time to peak insulin activity
+  iob_dia_hours: 5.0             # Duration of insulin action
+
+  # Carbohydrate absorption
+  meal_type: default             # default | fast | medium | slow
+  cob_t_max_min: 60              # Time to peak absorption rate
+  cob_duration_min: 180          # Total absorption window
+
+  # Rate of change
+  roc_window_steps: 3            # Steps for RoC smoothing (15 min)
+
+  # Glycemic variability (rolling window)
+  gv_window_steps: 288           # 24 hours at 5-min resolution
+
+  # Feature columns used as model input
+  historical_features:
+    - cgm_norm          # Normalised CGM value
+    - basal_rate        # Insulin pump basal rate (units/hr)
+    - iob               # Insulin on board (units)
+    - cob               # Carbs on board (g)
+    - cgm_roc           # Rate of change (mg/dL/min)
+    - meal_flag         # Active meal absorption (binary)
+    - bolus_flag        # Recent bolus flag (binary)
+    - exercise_intensity # 0-3 scale
+    - time_sin          # Circadian: sin(2π × hour/24)
+    - time_cos          # Circadian: cos(2π × hour/24)
+    - day_sin           # Weekly: sin(2π × dow/7)
+    - day_cos           # Weekly: cos(2π × dow/7)
+
+  future_features:      # Known future inputs for TFT decoder
+    - announced_meal    # Carbs announced for upcoming meal (g)
+    - planned_bolus     # Scheduled bolus units
+    - time_sin
+    - time_cos
+    - day_sin
+    - day_cos
+
+  static_features:      # Patient-level static covariates
+    - patient_age
+    - patient_weight
+    - total_daily_dose
+    - hba1c
+    - diabetes_duration
+
+
+# ─── Models ──────────────────────────────────────────────────────────────────
+
+model:
+  name: tft             # tft | lstm | tcn | nbeats
+
+  tft:
+    hidden_size: 128
+    num_heads: 4
+    num_lstm_layers: 2
+    dropout: 0.1
+    num_static_vars: 5
+    num_historical_vars: 12
+    num_future_vars: 6
+    quantiles: [0.1, 0.5, 0.9]
+
+  lstm:
+    hidden_size: 128
+    num_encoder_layers: 2
+    num_decoder_layers: 2
+    dropout: 0.2
+    attention_dim: 64
+    teacher_forcing_ratio: 0.5   # Decayed to 0 during fine-tuning
+
+  tcn:
+    n_channels: 64
+    kernel_size: 3
+    num_blocks: 8                 # Dilation: 1, 2, 4, 8, 16, 32, 64, 128
+    dropout: 0.2
+    multi_scale_dilations: [1, 4, 12, 36]
+
+  nbeats:
+    hidden_size: 256
+    n_blocks_per_stack: 3
+    n_fc_layers: 4
+    trend_degree: 3
+    n_harmonics: 6
+    n_generic_stacks: 2
+    theta_size: 32
+    dropout: 0.1
+
+
+# ─── Training ────────────────────────────────────────────────────────────────
+
+training:
+  # Optimiser
+  learning_rate: 3.0e-4
+  weight_decay: 1.0e-4
+  max_grad_norm: 1.0
+
+  # Schedule: cosine annealing with warm restarts
+  scheduler: cosine_warm_restarts
+  scheduler_t0: 10
+  scheduler_t_mult: 2
+  scheduler_eta_min: 1.0e-6
+
+  # Loop
+  max_epochs: 100
+  early_stopping_patience: 15
+  early_stopping_metric: val_mae_30min  # Primary metric: 30-min MAE in mg/dL
+
+  # Loss
+  quantiles: [0.1, 0.5, 0.9]
+  # Horizon weights: prioritise short-term (30-min) for clinical safety
+  horizon_weights: [0.5, 0.3, 0.2]   # [30-min, 60-min, 120-min]
+  huber_delta: 15.0                   # ~1 SD of glucose variability
+
+  # Mixed precision
+  use_amp: true
+
+  # Checkpointing
+  checkpoint_dir: checkpoints/
+  save_every_n_epochs: 5
+
+  # Fine-tuning
+  finetune_epochs: 20
+  finetune_lr: 1.0e-5
+  freeze_base: false   # True for very limited patient data (<2 weeks)
+
+
+# ─── Evaluation ──────────────────────────────────────────────────────────────
+
+evaluation:
+  prediction_horizons_min: [30, 60, 120]
+
+  metrics:
+    - rmse
+    - mae
+    - mard
+    - clarke_error_grid
+    - parkes_error_grid
+    - coverage_90    # 90% prediction interval coverage
+    - temporal_lag
+    - glycemia_specific_rmse
+
+  safety:
+    hypo_alert_threshold: 70.0     # mg/dL
+    severe_hypo_threshold: 54.0    # mg/dL
+    hyper_alert_threshold: 250.0   # mg/dL
+    alert_horizons_min: [30, 60]   # Evaluate alert performance at these horizons
+
+
+# ─── Inference ───────────────────────────────────────────────────────────────
+
+inference:
+  checkpoint: checkpoints/best_model.pt
+  device: auto   # auto | cpu | cuda | mps
+
+  alerts:
+    hypo_alert_mgdl: 70.0
+    severe_hypo_mgdl: 54.0
+    hyper_alert_mgdl: 250.0
+    fast_rise_mgdl_min: 2.0
+    fast_fall_mgdl_min: -2.0
+    suppression_period_min: 30.0
+    low_confidence_interval_mgdl: 100.0
+
+
+# ─── Paths ───────────────────────────────────────────────────────────────────
+
+paths:
+  data_dir: data/
+  checkpoint_dir: checkpoints/
+  log_dir: logs/
+  results_dir: results/
+  figures_dir: figures/

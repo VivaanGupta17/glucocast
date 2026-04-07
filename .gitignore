@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# PyTorch checkpoints (large files — use DVC or cloud storage)
+checkpoints/*.pt
+checkpoints/*.pth
+*.pt
+*.pth
+
+# Data (OhioT1DM requires DUA — do not commit)
+data/ohio/
+data/nightscout/
+data/openaps/
+*.xml
+
+# Results and logs
+logs/
+results/
+figures/
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MyPy
+.mypy_cache/
+
+# Experiment tracking
+mlruns/
+wandb/
+
+# Distribution
+*.egg
+MANIFEST
