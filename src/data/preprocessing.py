@@ -481,3 +481,25 @@ class CGMPreprocessor:
     def denormalise(normalised: pd.Series, mu: float, sigma: float) -> pd.Series:
         """Inverse of z-score normalisation."""
         return normalised * sigma + mu
+
+
+SENSOR_WARMUP_MINUTES = 120  # first 2 hours after sensor insertion are unreliable
+
+
+def skip_sensor_warmup(cgm_df, sensor_start_time=None, warmup_min: int = SENSOR_WARMUP_MINUTES):
+    """
+    Drop readings from the sensor warmup period.
+    During warmup, glucose readings are often inaccurate due to tissue equilibration.
+    """
+    if sensor_start_time is None:
+        sensor_start_time = cgm_df["timestamp"].min()
+
+    cutoff = sensor_start_time + pd.Timedelta(minutes=warmup_min)
+    filtered = cgm_df[cgm_df["timestamp"] >= cutoff].copy()
+    n_dropped = len(cgm_df) - len(filtered)
+    if n_dropped > 0:
+        import logging
+        logging.getLogger("glucocast.preprocessing").info(
+            "skipped %d warmup readings (first %d min)", n_dropped, warmup_min
+        )
+    return filtered
