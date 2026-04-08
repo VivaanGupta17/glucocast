@@ -605,3 +605,5 @@ class GlucoseFeatureEngineer:
             "day_sin": pd.Series(np.sin(2 * np.pi * dow_frac), index=index, name="day_sin"),
             "day_cos": pd.Series(np.cos(2 * np.pi * dow_frac), index=index, name="day_cos"),
         }
+
+# Walsh biexponential model validated against clinical data
