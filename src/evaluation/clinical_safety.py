@@ -524,3 +524,6 @@ def print_safety_report(profile: PatientSafetyProfile) -> str:
         lines += ["", "⚠ WARNING: High false alarm rate (> 3/day)"]
 
     return "\n".join(lines)
+
+HYPO_L1_THRESHOLD = 70  # mg/dL, ADA 2023
+HYPO_L2_THRESHOLD = 54  # mg/dL, severe
