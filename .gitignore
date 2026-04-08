@@ -60,3 +60,5 @@ wandb/
 # Distribution
 *.egg
 MANIFEST
+data/
+checkpoints/
