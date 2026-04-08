@@ -607,3 +607,40 @@ class GlucoseFeatureEngineer:
         }
 
 # Walsh biexponential model validated against clinical data
+
+
+LATE_LOGGING_DELAY_MIN = 20  # typical delay between meal and app entry
+
+
+def handle_late_meal_logging(meal_events, cgm_df, max_delay_min: int = LATE_LOGGING_DELAY_MIN):
+    """
+    Shift meal timestamps backward to account for late meal logging.
+    Users often log a meal 15-30 min after eating, which skews IOB/COB computation.
+
+    Heuristic: if glucose starts rising before the logged meal time,
+    shift the event to match the observed rise onset.
+    """
+    corrected = []
+    for event in meal_events:
+        log_time = event["timestamp"]
+        carbs = event.get("carbs_g", 0)
+
+        # look for glucose inflection in the window before logged meal time
+        window_start = log_time - pd.Timedelta(minutes=max_delay_min)
+        window_cgm = cgm_df[
+            (cgm_df["timestamp"] >= window_start) & (cgm_df["timestamp"] <= log_time)
+        ]
+
+        if len(window_cgm) >= 2:
+            rates = window_cgm["glucose_mg_dl"].diff()
+            rising_idx = (rates > 1.5).idxmax()
+            if rising_idx and window_cgm.loc[rising_idx, "timestamp"] < log_time:
+                corrected_time = window_cgm.loc[rising_idx, "timestamp"]
+            else:
+                corrected_time = log_time
+        else:
+            corrected_time = log_time
+
+        corrected.append({**event, "timestamp": corrected_time, "original_log_time": log_time})
+
+    return corrected
