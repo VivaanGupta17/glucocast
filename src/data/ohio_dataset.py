@@ -578,3 +578,29 @@ class CGMWindowDataset(Dataset):
             "targets": targets,
             "targets_norm": targets_norm,
         }
+
+
+import pytz as _pytz
+
+
+def normalise_timestamps_to_utc(df, local_tz: str = "America/New_York"):
+    """
+    Convert naive local timestamps to UTC-aware datetimes.
+    OhioT1DM timestamps are stored in local time without timezone info,
+    which causes off-by-one-hour bugs around DST transitions.
+    """
+    tz = _pytz.timezone(local_tz)
+
+    if df["timestamp"].dt.tz is None:
+        # assume local time, localise then convert
+        df = df.copy()
+        df["timestamp"] = (
+            df["timestamp"]
+            .dt.tz_localize(tz, ambiguous="infer", nonexistent="shift_forward")
+            .dt.tz_convert("UTC")
+        )
+    elif str(df["timestamp"].dt.tz) != "UTC":
+        df = df.copy()
+        df["timestamp"] = df["timestamp"].dt.tz_convert("UTC")
+
+    return df
